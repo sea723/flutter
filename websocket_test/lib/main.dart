@@ -1,122 +1,169 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'lidar.dart';
+import 'pointcloud.dart';
+final lidarDataProvider =  StateProvider<Map<int, Lidar>>((ref) => {});
 
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
-  }
-}
-
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class MyHomePage extends ConsumerStatefulWidget {
+  const MyHomePage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  ConsumerState<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _MyHomePageState extends ConsumerState<MyHomePage> {
+  final TextEditingController _urlController = TextEditingController(text: 'ws://127.0.0.1:8765');
+  WebSocketChannel? _channel;
+  List<String> _messages = [];
+  bool _connected = false;
 
-  void _incrementCounter() {
+
+  void _connect() {
+    final url = _urlController.text.trim();
+    print('연결 시도: $url');
+    if (_channel != null) {
+      _channel!.sink.close();
+    }
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _messages.clear();
+      _connected = true;
+      _channel = WebSocketChannel.connect(Uri.parse(url));
+      _channel!.stream.listen((data) {
+        final jsonData = jsonDecode(data);
+        if (jsonData['type'] == 'lidar') {
+          final lidar = Lidar.fromJson(jsonData);
+          final channels = {...ref.read(lidarDataProvider)};
+          channels[lidar.channel] = lidar;
+          ref.read(lidarDataProvider.notifier).state = channels;
+        }
+        setState(() {
+          _messages.add(jsonData.toString());
+        });
+      }, onDone: () {
+        print('연결 종료');
+        setState(() {
+          _connected = false;
+        });
+      }, onError: (error) {
+        print('에러 발생: $error');
+        setState(() {
+          _connected = false;
+          _messages.add('에러: $error');
+        });
+      });
     });
   }
 
+  void _disconnect() {
+    _channel?.sink.close();
+    setState(() {
+      _connected = false;
+      _messages.add('연결 해제됨');
+    });
+  }
+  
+  @override
+  void dispose() {
+    _channel?.sink.close();
+    _urlController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final lidarDatas = ref.watch(lidarDataProvider);
+    final firstLidar = lidarDatas.isNotEmpty ? lidarDatas.values.first : null;
+    final angle = firstLidar?.hfov ?? 360;
+    final vfov = firstLidar?.vfov is double ? firstLidar!.vfov as double : 30.0;
+
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Flutter WebSocket Demo Page'),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _urlController,
+                    decoration: const InputDecoration(
+                      labelText: '서버 IP, Port 입력 (ws://...)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _connected ? _disconnect : _connect,
+                  child: Text(_connected ? '연결 해제' : '연결 버튼'),
+                ),
+              ],
             ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black26),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: _messages.isEmpty
+                    ? const Center(child: Text('수신 메시지 표시'))
+                    : ListView.builder(
+                        itemCount: _messages.length,
+                        itemBuilder: (context, idx) => ListTile(
+                          title: Text(_messages[idx]),
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        ElevatedButton(
+                          onPressed: _connected && _channel != null
+                              ? () => _channel!.sink.add('{"type":"test1"}')
+                              : null,
+                          child: const Text('메시지 1'),
+                        ),
+                        // ... 추가 버튼들
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (lidarDatas != null)
+              SizedBox(
+                width: 400,
+                height: 400,
+                child: CustomPaint(
+                  painter: PointCloudPainter(lidarDatas, angle, vfov),
+                ),
+              )
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
+}
+
+void main() {
+  runApp(
+    ProviderScope(
+      child: MaterialApp(
+        home: MyHomePage(),
+      ),
+    ),
+  );
 }
