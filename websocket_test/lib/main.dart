@@ -57,20 +57,40 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
             ref.read(lidarDataProvider.notifier).state = channels;
             
             print('Provider 업데이트 완료. 총 채널 수: ${channels.length}');
+            
+            // 라이다 데이터는 메시지 로그에 간단히 표시
+            if (mounted) {
+              setState(() {
+                _messages.add('[라이다] 채널 ${jsonData['channel']}: ${jsonData['distances']?.length ?? 0}개 포인트');
+              });
+            }
           } else {
-            print('라이다 데이터가 아님: ${jsonData['type']}');
+            // 일반 메시지나 응답은 메시지 로그에 전체 표시
+            String messageType = jsonData['type'] ?? 'unknown';
+            String messageContent = jsonData['message'] ?? jsonData['status'] ?? data.toString();
+            
+            if (mounted) {
+              setState(() {
+                _messages.add('[$messageType] $messageContent');
+              });
+            }
+            
+            print('서버 응답: $messageType - $messageContent');
           }
         } catch (e) {
           print('JSON 파싱 에러: $e');
           print('문제가 된 데이터: $data');
+          
+          // JSON이 아닌 단순 텍스트 메시지도 표시
+          if (mounted) {
+            setState(() {
+              _messages.add('[텍스트] $data');
+            });
+          }
         }
         
         // 위젯이 여전히 활성 상태인지 다시 확인
-        if (mounted) {
-          setState(() {
-            _messages.add(data.toString());
-          });
-        }
+        // (메시지 처리는 위에서 이미 완료됨)
       }, onDone: () {
         print('연결 종료');
         if (mounted) {
@@ -342,21 +362,53 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
               children: [
                 ElevatedButton(
                   onPressed: _connected && _channel != null
-                      ? () => _channel!.sink.add('{"type":"test1"}')
+                      ? () {
+                          String message = '{"type":"test1", "data":"테스트 메시지 1"}';
+                          _channel!.sink.add(message);
+                          print('송신: $message');
+                        }
                       : null,
-                  child: const Text('메시지 1'),
+                  child: const Text('테스트 1'),
                 ),
                 ElevatedButton(
                   onPressed: _connected && _channel != null
-                      ? () => _channel!.sink.add('{"type":"start_scan"}')
+                      ? () {
+                          String message = '{"type":"ping", "timestamp":"${DateTime.now().millisecondsSinceEpoch}"}';
+                          _channel!.sink.add(message);
+                          print('송신: $message');
+                        }
+                      : null,
+                  child: const Text('핑 테스트'),
+                ),
+                ElevatedButton(
+                  onPressed: _connected && _channel != null
+                      ? () {
+                          String message = '{"type":"start_scan"}';
+                          _channel!.sink.add(message);
+                          print('송신: $message');
+                        }
                       : null,
                   child: const Text('스캔 시작'),
                 ),
                 ElevatedButton(
                   onPressed: _connected && _channel != null
-                      ? () => _channel!.sink.add('{"type":"stop_scan"}')
+                      ? () {
+                          String message = '{"type":"stop_scan"}';
+                          _channel!.sink.add(message);
+                          print('송신: $message');
+                        }
                       : null,
                   child: const Text('스캔 중지'),
+                ),
+                ElevatedButton(
+                  onPressed: _connected && _channel != null
+                      ? () {
+                          String message = '{"type":"get_status"}';
+                          _channel!.sink.add(message);
+                          print('송신: $message');
+                        }
+                      : null,
+                  child: const Text('상태 확인'),
                 ),
               ],
             ),
