@@ -20,7 +20,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
   List<String> _messages = [];
   bool _connected = false;
   String _colorMode = 'distance'; // 색상 모드
-  double _pointSize = 0.05; // 포인트 크기
+  double _pointSize = 0.1; // 포인트 크기 - 더 작은 기본값
   bool _showGrid = true; // 그리드 표시 여부
   double _gridStep = 1.0; // 그리드 간격 (미터)
 
@@ -39,17 +39,16 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
         if (!mounted) return;
         
         print('=== WebSocket 데이터 수신 ===');
-        print('Raw data: $data');
+        // print('Raw data: $data');
         
         try {
           final jsonData = jsonDecode(data);
-          print('Parsed JSON: $jsonData');
+          // print('Parsed JSON: $jsonData');
           print('Data type: ${jsonData['type']}');
           
           if (jsonData['type'] == 'lidar') {
             print('라이다 데이터 감지! 채널: ${jsonData['channel']}');
             print('거리 데이터 수: ${jsonData['distances']?.length ?? 0}');
-            print('방위각 데이터 수: ${jsonData['azimuth']?.length ?? 0}');
             
             final lidar = Lidar.fromJson(jsonData);
             final channels = {...ref.read(lidarDataProvider)};
@@ -79,7 +78,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
           }
         } catch (e) {
           print('JSON 파싱 에러: $e');
-          print('문제가 된 데이터: $data');
+          // print('문제가 된 데이터: $data');
           
           // JSON이 아닌 단순 텍스트 메시지도 표시
           if (mounted) {
@@ -200,12 +199,12 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                           children: [
                             const Text('크기: '),
                             SizedBox(
-                              width: 80,
+                              width: 120, // 슬라이더 폭을 넓힘
                               child: Slider(
                                 value: _pointSize,
-                                min: 0.01,
-                                max: 0.2,
-                                divisions: 19,
+                                min: 0.05, // 최소값을 0.05픽셀로 더 작게
+                                max: 2.0,  // 최대값을 2픽셀로 줄임
+                                divisions: 100, // 더 세밀한 조절
                                 onChanged: (value) {
                                   setState(() {
                                     _pointSize = value;
@@ -213,7 +212,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                                 },
                               ),
                             ),
-                            Text(_pointSize.toStringAsFixed(2)),
+                            SizedBox(
+                              width: 50, // 텍스트 표시 영역 확보
+                              child: Text(_pointSize.toStringAsFixed(2)), // 소수점 2자리로 변경
+                            ),
                           ],
                         ),
                         Row(
@@ -339,7 +341,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                           Expanded(
                             child: Simple3DViewer(
                               channels: lidarDatas,
-                              pointSize: _pointSize * 20, // Canvas용 크기 조정
+                              pointSize: _pointSize, // Canvas용 크기 조정 제거 - 직접 픽셀값 사용
                               colorMode: _colorMode,
                               showGrid: _showGrid, // 그리드 옵션 전달
                               gridStep: _gridStep, // 그리드 간격 전달

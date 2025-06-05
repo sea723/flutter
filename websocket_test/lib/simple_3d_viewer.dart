@@ -176,7 +176,7 @@ class _Simple3DViewerState extends State<Simple3DViewer> {
         String color = getPointColor(point, minDistance, maxDistance);
         
         // 포인트 크기 (훨씬 더 크게)
-        double pointRadius = math.max(widget.pointSize * 2.0, 5.0); // 최소 5픽셀
+        double pointRadius = math.max(widget.pointSize * 2.0, 0.1); // 최소 0.1픽셀
         
         // 포인트 그리기
         ctx.fillStyle = color;
