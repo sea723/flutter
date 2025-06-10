@@ -100,7 +100,6 @@ class KanaviLidarParser:
                     
                     # 각도 계산 (HFoV를 포인트 수로 균등 분할)
                     hfov = model_info["hfov"]
-                    azimuth = -hfov/2 + (i * hfov / (expected_points - 1)) if expected_points > 1 else 0
                     
                     # Detection 정보 (마지막 바이트에서 추출하거나 기본값)
                     detection = 0
@@ -110,19 +109,18 @@ class KanaviLidarParser:
                         if i < len(packet_data) - detection_offset:
                             detection = packet_data[detection_offset + (i % (len(packet_data) - detection_offset))]
                     
-                    if distance > 0:  # 유효한 거리값만
-                        points.append({
-                            'channel': actual_channel,
-                            'distance': distance,
-                            'azimuth': azimuth,
-                            'detection': detection,
-                            'point_index': i
-                        })
+                    points.append({
+                        'channel': actual_channel,
+                        'distance': distance,
+                        'detection': detection,
+                        'point_index': i
+                    })
+                    if distance > 0:  # 유효한 거리값 체크크
                         valid_points += 1
                     else:
                         zero_distance_count += 1
                 
-                print(f"   → 예상 포인트: {expected_points}개, 유효 포인트: {valid_points}개, 무효 포인트: {zero_distance_count}개")
+                print(f"   → 포인트: {expected_points}개 = 유효 포인트: {valid_points} / 무효 포인트: {zero_distance_count}개")
             
             return {
                 'points': points,
@@ -225,6 +223,8 @@ class KanaviWebSocketServer:
         # 라이다 데이터 콜백 설정
         self.lidar_receiver.set_data_callback(self.on_lidar_data_received)
     
+    # mock_server_lidar.py 수정
+
     def on_lidar_data_received(self, parsed_data, source_addr):
         """Kanavi 라이다 데이터 수신 콜백"""
         try:
@@ -244,20 +244,17 @@ class KanaviWebSocketServer:
             
             # WebSocket JSON 형태로 변환
             distances = [p['distance'] for p in points]
-            azimuths = [p['azimuth'] for p in points]
             detections = [p['detection'] for p in points]
             
-            # 수직각 계산 (채널별 고정값)
+            # 🔧 vfov 수정: 채널별 고정값 (단일 숫자)
             if model_info['name'] == 'VL-R4':
-                vfov_map = {0: -1.5, 1: -0.5, 2: 0.5, 3: 1.5}
-                vertical_angle = vfov_map.get(channel, 0.0)
+                vfov_map = {0: -1.1, 1: 0.0, 2: 1.1, 3: 2.2}
+                vfov = vfov_map.get(channel, 0.0)  # 단일값
             elif model_info['name'] == 'VL-R2':
-                vfov_map = {0: -0.5, 1: 0.5}
-                vertical_angle = vfov_map.get(channel, 0.0)
+                vfov_map = {0: 0.0, 1: 3.0}
+                vfov = vfov_map.get(channel, 0.0)  # 단일값
             else:
-                vertical_angle = 0.0
-            
-            vertical_angles = [vertical_angle] * len(points)
+                vfov = 0.0  # ← set이 아닌 숫자로 수정!
             
             lidar_data = {
                 "type": "lidar",
@@ -265,12 +262,10 @@ class KanaviWebSocketServer:
                 "pointsize": len(distances),
                 "channel": channel,
                 "hfov": model_info['hfov'],
-                "vfov": vertical_angles,
+                "vfov": vfov,  # ← 이 채널의 고정 수직각 (단일값)
                 "distances": distances,
-                "azimuth": azimuths,
-                "vertical_angle": vertical_angles,
+                "hresolution": 0.25,
                 "max": max(distances) if distances else 50,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "source_ip": str(source_addr[0]),
                 "lidar_id": f"0x{parsed_data['lidar_id']:02X}",
                 "detection_data": detections,
@@ -280,16 +275,14 @@ class KanaviWebSocketServer:
             # 큐를 통해 메인 스레드로 데이터 전달
             try:
                 self.data_queue.put_nowait(lidar_data)
-                print(f"📤 데이터 큐에 추가: 채널 {channel}, {len(distances)}개 포인트")
+                print(f"📤 Ch{channel}: {len(distances)}개 포인트, vfov: {vfov}°")
             except queue.Full:
                 print(f"⚠️  데이터 큐가 가득참")
-            
-            # 디버그 출력
-            print(f"📊 {model_info['name']} Ch{channel}: {len(distances)}개 포인트, "
-                  f"거리범위: {min(distances):.2f}~{max(distances):.2f}m")
                 
         except Exception as e:
             print(f"Kanavi 라이다 데이터 처리 오류: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def broadcast_to_clients(self, data):
         """모든 클라이언트에 데이터 브로드캐스트"""
@@ -315,7 +308,7 @@ class KanaviWebSocketServer:
             self.connected_clients.discard(client)
             
         if success_count > 0:
-            print(f"✅ WebSocket 전송 성공: {success_count}개 클라이언트")
+            print(f"✅ WebSocket 전송 성공: {success_count}개 클라이언트 [{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]")
     
     async def broadcast_data_loop(self):
         """데이터 큐 처리 루프 (메인 이벤트 루프에서 실행)"""

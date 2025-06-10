@@ -357,7 +357,6 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                               items: const [
                                 DropdownMenuItem(value: 'distance', child: Text('거리')),
                                 DropdownMenuItem(value: 'channel', child: Text('채널')),
-                                DropdownMenuItem(value: 'vertical_angle', child: Text('각도')),
                               ],
                               onChanged: (value) {
                                 if (!_isDisposed && mounted) {
@@ -547,13 +546,13 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                                   width: 10,
                                   height: 10,
                                   decoration: BoxDecoration(
-                                    color: _scanStopped ? Colors.red : (_connected ? Colors.green : Colors.grey),
+                                    color: (_connected ? (_scanStopped ? Colors.red : Colors.green) : Colors.grey),
                                     shape: BoxShape.circle,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  '${_scanStopped ? "중지됨" : (_connected ? "스캔중" : "대기중")}',
+                                  '${_connected ? (_scanStopped ? "중지됨" : "스캔중") : "대기중"}',
                                   style: const TextStyle(color: Colors.white, fontSize: 12),
                                 ),
                               ],
@@ -598,13 +597,23 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                 ),
                 ElevatedButton(
                   onPressed: _connected && _channel != null && !_isDisposed
-                      ? () => _sendMessage('{"type":"start_scan"}')
+                      ? () {
+                          _sendMessage('{"type":"start_scan"}');
+                          setState(() {
+                            _scanStopped = false;
+                          });
+                        }
                       : null,
                   child: Text(_scanStopped ? '스캔 시작' : '스캔 중'),
                 ),
                 ElevatedButton(
                   onPressed: _connected && _channel != null && !_isDisposed && !_scanStopped
-                      ? () => _sendMessage('{"type":"stop_scan"}')
+                      ? () {
+                          _sendMessage('{"type":"stop_scan"}');
+                          setState(() {
+                            _scanStopped = true;
+                          });
+                        }
                       : null,
                   child: const Text('스캔 중지'),
                 ),
