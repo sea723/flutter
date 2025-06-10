@@ -9,7 +9,7 @@ import 'lidar.dart';
 class PointCloud3DWidget extends StatefulWidget {
   final Map<int, Lidar> channels;
   final double pointSize;
-  final String colorMode; // 'distance', 'channel', 'intensity'
+  final String colorMode; // 'distance', 'channel'
 
   const PointCloud3DWidget({
     Key? key,
@@ -191,10 +191,6 @@ class _PointCloud3DWidgetState extends State<PointCloud3DWidget> {
         // 채널 기반 색상
         double hue = (point.channel * 60) % 360;
         return hsvToRgb(hue, 1.0, 1.0);
-        
-      case 'intensity':
-        // 강도 기반 색상 (그레이스케일)
-        return [point.intensity, point.intensity, point.intensity];
         
       default:
         return [1.0, 1.0, 1.0]; // 기본 흰색

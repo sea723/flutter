@@ -15,7 +15,6 @@ class KanaviLidarParser:
     def __init__(self):
         # 라이다 모델별 설정
         self.lidar_models = {
-            0x02: {"name": "VL-R2SL", "channels": 2, "hfov": 120, "interface": "Serial"},
             0x03: {"name": "VL-R2", "channels": 2, "hfov": 120, "interface": "Ethernet"},
             0x06: {"name": "VL-R4", "channels": 4, "hfov": 100, "interface": "Ethernet"},
             0x07: {"name": "VL-R270", "channels": 1, "hfov": 270, "interface": "Ethernet"}
@@ -111,14 +110,10 @@ class KanaviLidarParser:
                         if i < len(packet_data) - detection_offset:
                             detection = packet_data[detection_offset + (i % (len(packet_data) - detection_offset))]
                     
-                    # 강도는 임시로 거리값 기반 계산
-                    intensity = min(255, max(0, int(distance * 2.55))) if distance > 0 else 0
-                    
                     if distance > 0:  # 유효한 거리값만
                         points.append({
                             'channel': actual_channel,
                             'distance': distance,
-                            'intensity': intensity,
                             'azimuth': azimuth,
                             'detection': detection,
                             'point_index': i
@@ -249,7 +244,6 @@ class KanaviWebSocketServer:
             
             # WebSocket JSON 형태로 변환
             distances = [p['distance'] for p in points]
-            intensities = [p['intensity'] for p in points]
             azimuths = [p['azimuth'] for p in points]
             detections = [p['detection'] for p in points]
             
@@ -274,7 +268,6 @@ class KanaviWebSocketServer:
                 "vfov": vertical_angles,
                 "distances": distances,
                 "azimuth": azimuths,
-                "intensities": intensities,
                 "vertical_angle": vertical_angles,
                 "max": max(distances) if distances else 50,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -390,7 +383,6 @@ class KanaviWebSocketServer:
                     "multicast_group": self.lidar_receiver.multicast_group,
                     "protocol": "Kanavi VL-Series Protocol v1.5.2",
                     "supported_models": {
-                        "VL-R2SL": "2Ch 120° Serial",
                         "VL-R2": "2Ch 120° Ethernet", 
                         "VL-R4": "4Ch 100° Ethernet",
                         "VL-R270": "1Ch 270° Ethernet"
@@ -475,15 +467,9 @@ async def main():
     print("   - 통신 방식: Ethernet UDP Multicast")
     print()
     print("🎯 지원 모델:")
-    print("   - VL-R2SL: 2채널 120° (Serial)")
     print("   - VL-R2: 2채널 120° (Ethernet)")
     print("   - VL-R4: 4채널 100° (Ethernet)")
     print("   - VL-R270: 1채널 270° (Ethernet)")
-    print()
-    print("⚙️  라이다 설정 확인:")
-    print("   - 라이다의 Ethernet Mode가 'Multicast'로 설정되어 있는지 확인")
-    print(f"   - 멀티캐스트 그룹 {MULTICAST_GROUP}로 데이터를 전송하는지 확인")
-    print("   - 기본적으로 Kanavi 라이다는 멀티캐스트 모드입니다")
     print()
     print(f"🌐 WebSocket: ws://0.0.0.0:{WEBSOCKET_PORT}")
     print("=" * 50)

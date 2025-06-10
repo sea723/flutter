@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 import 'lidar.dart';
 import 'simple_3d_viewer.dart';
 
@@ -17,122 +18,296 @@ class MyHomePage extends ConsumerStatefulWidget {
 class _MyHomePageState extends ConsumerState<MyHomePage> {
   final TextEditingController _urlController = TextEditingController(text: 'ws://127.0.0.1:8765');
   WebSocketChannel? _channel;
+  StreamSubscription? _webSocketSubscription;
   List<String> _messages = [];
   bool _connected = false;
-  String _colorMode = 'distance'; // 색상 모드
-  double _pointSize = 0.1; // 포인트 크기 - 더 작은 기본값
-  bool _showGrid = true; // 그리드 표시 여부
-  double _gridStep = 1.0; // 그리드 간격 (미터)
+  bool _scanStopped = true; // 초기에는 스캔 중지 상태
+  String _colorMode = 'distance';
+  double _pointSize = 1.0;
+  bool _showGrid = true;
+  bool _showAxis = true;
+  double _gridStep = 1.0;
+  bool _isDisposed = false;
+  
+  // 내부 라이다 데이터 저장소
+  Map<int, Lidar> _localLidarData = {};
+  
+  // Provider 업데이트를 위한 타이머
+  Timer? _providerUpdateTimer;
+  
+  // 로깅 제한용
+  int _dataCount = 0;
+  DateTime _lastLogTime = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    
+    _providerUpdateTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      _safeUpdateProvider();
+    });
+  }
+
+  void _safeUpdateProvider() {
+    if (!_isDisposed && mounted && _localLidarData.isNotEmpty && !_scanStopped) {
+      try {
+        ref.read(lidarDataProvider.notifier).state = Map.from(_localLidarData);
+      } catch (e) {
+        // 에러는 조용히 무시
+      }
+    }
+  }
 
   void _connect() {
     final url = _urlController.text.trim();
-    print('연결 시도: $url');
-    if (_channel != null) {
-      _channel!.sink.close();
-    }
-    setState(() {
-      _messages.clear();
-      _connected = true;
-      _channel = WebSocketChannel.connect(Uri.parse(url));
-      _channel!.stream.listen((data) {
-        // 위젯이 여전히 활성 상태인지 확인
-        if (!mounted) return;
-        
-        print('=== WebSocket 데이터 수신 ===');
-        // print('Raw data: $data');
-        
-        try {
-          final jsonData = jsonDecode(data);
-          // print('Parsed JSON: $jsonData');
-          print('Data type: ${jsonData['type']}');
-          
-          if (jsonData['type'] == 'lidar') {
-            print('라이다 데이터 감지! 채널: ${jsonData['channel']}');
-            print('거리 데이터 수: ${jsonData['distances']?.length ?? 0}');
-            
-            final lidar = Lidar.fromJson(jsonData);
-            final channels = {...ref.read(lidarDataProvider)};
-            channels[lidar.channel] = lidar;
-            ref.read(lidarDataProvider.notifier).state = channels;
-            
-            print('Provider 업데이트 완료. 총 채널 수: ${channels.length}');
-            
-            // 라이다 데이터는 메시지 로그에 간단히 표시
-            if (mounted) {
-              setState(() {
-                _messages.add('[라이다] 채널 ${jsonData['channel']}: ${jsonData['distances']?.length ?? 0}개 포인트');
-              });
-            }
-          } else {
-            // 일반 메시지나 응답은 메시지 로그에 전체 표시
-            String messageType = jsonData['type'] ?? 'unknown';
-            String messageContent = jsonData['message'] ?? jsonData['status'] ?? data.toString();
-            
-            if (mounted) {
-              setState(() {
-                _messages.add('[$messageType] $messageContent');
-              });
-            }
-            
-            print('서버 응답: $messageType - $messageContent');
-          }
-        } catch (e) {
-          print('JSON 파싱 에러: $e');
-          // print('문제가 된 데이터: $data');
-          
-          // JSON이 아닌 단순 텍스트 메시지도 표시
-          if (mounted) {
-            setState(() {
-              _messages.add('[텍스트] $data');
-            });
-          }
-        }
-        
-        // 위젯이 여전히 활성 상태인지 다시 확인
-        // (메시지 처리는 위에서 이미 완료됨)
-      }, onDone: () {
-        print('연결 종료');
-        if (mounted) {
-          setState(() {
-            _connected = false;
-          });
-        }
-      }, onError: (error) {
-        print('에러 발생: $error');
-        if (mounted) {
-          setState(() {
-            _connected = false;
-            _messages.add('에러: $error');
-          });
-        }
+    print('🔗 연결 시도: $url');
+
+    _disconnect();
+    
+    if (mounted && !_isDisposed) {
+      setState(() {
+        _messages.clear();
+        _connected = true;
+        _localLidarData.clear();
+        _scanStopped = true; // 연결시 스캔 중지 상태로 시작
+        _dataCount = 0;
       });
-    });
+    }
+    
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(url));
+      
+      _webSocketSubscription = _channel!.stream.listen(
+        (data) => _handleWebSocketData(data),
+        onDone: () => _handleWebSocketDone(),
+        onError: (error) => _handleWebSocketError(error),
+      );
+      
+    } catch (e) {
+      print('❌ WebSocket 연결 실패: $e');
+      if (mounted && !_isDisposed) {
+        _safeSetState(() {
+          _connected = false;
+          _addMessage('연결 실패: $e');
+        });
+      }
+    }
   }
 
-  void _disconnect() {
-    _channel?.sink.close();
-    setState(() {
-      _connected = false;
-      _messages.add('연결 해제됨');
+  void _handleWebSocketData(dynamic data) {
+    // 스캔이 중지되었으면 데이터 처리 중단
+    if (_isDisposed || !mounted || _scanStopped) {
+      return; // 조용히 무시
+    }
+    
+    _dataCount++;
+    
+    // 로깅을 대폭 줄임 (100개마다 한 번만)
+    bool shouldLog = _dataCount % 100 == 0 || 
+                     DateTime.now().difference(_lastLogTime).inSeconds >= 5;
+    
+    if (shouldLog) {
+      print('📡 데이터 수신 중... (${_dataCount}개 처리됨)');
+      _lastLogTime = DateTime.now();
+    }
+    
+    try {
+      final jsonData = jsonDecode(data);
+      
+      if (jsonData['type'] == 'lidar') {
+        _handleLidarDataQuiet(jsonData, shouldLog);
+      } else {
+        _handleGeneralMessage(jsonData, data);
+      }
+      
+    } catch (e) {
+      if (shouldLog) {
+        print('❌ JSON 파싱 에러: $e');
+      }
+      _safeSetState(() {
+        _addMessage('[에러] JSON 파싱 실패');
+      });
+    }
+  }
+  
+  void _handleLidarDataQuiet(Map<String, dynamic> jsonData, bool shouldLog) {
+    if (_isDisposed || !mounted || _scanStopped) return;
+    
+    try {
+      if (shouldLog) {
+        print('📊 라이다 채널 ${jsonData['channel']}: ${jsonData['distances']?.length ?? 0}개');
+      }
+      
+      final lidar = Lidar.fromJsonQuiet(jsonData, verbose: shouldLog);
+      
+      // 로컬 데이터에 저장
+      _localLidarData[lidar.channel] = lidar;
+      
+      // UI 업데이트는 조건부로 (1초에 10번만)
+      if (_dataCount % 10 == 0) {
+        _safeSetState(() {
+          _addMessage('[라이다] 채널 ${jsonData['channel']}: ${jsonData['distances']?.length ?? 0}개');
+        });
+      }
+      
+    } catch (e) {
+      if (shouldLog) {
+        print('❌ 라이다 처리 실패: $e');
+      }
+      _safeSetState(() {
+        _addMessage('[에러] 라이다 데이터 처리 실패');
+      });
+    }
+  }
+  
+  void _handleGeneralMessage(Map<String, dynamic> jsonData, dynamic originalData) {
+    if (_isDisposed || !mounted) return;
+    
+    String messageType = jsonData['type'] ?? 'unknown';
+    String messageContent = jsonData['message'] ?? jsonData['status'] ?? originalData.toString();
+    
+    print('📢 서버 응답: $messageType - $messageContent');
+    
+    _safeSetState(() {
+      _addMessage('[$messageType] $messageContent');
     });
   }
   
-  @override
-  void dispose() {
-    // WebSocket 연결을 먼저 정리
+  void _handleWebSocketDone() {
+    print('🔌 WebSocket 연결 종료');
+    if (mounted && !_isDisposed) {
+      _safeSetState(() {
+        _connected = false;
+        _addMessage('연결 종료됨');
+      });
+    }
+  }
+  
+  void _handleWebSocketError(dynamic error) {
+    print('❌ WebSocket 에러: $error');
+    if (mounted && !_isDisposed) {
+      _safeSetState(() {
+        _connected = false;
+        _addMessage('에러: $error');
+      });
+    }
+  }
+  
+  void _addMessage(String message) {
+    if (_messages.length > 50) { // 메시지 수 줄임
+      _messages.removeAt(0);
+    }
+    _messages.add('[${DateTime.now().toString().substring(11, 19)}] $message');
+  }
+
+  void _disconnect() {
+    print('🔌 연결 해제 시작');
+    
+    if (_connected && _channel != null && !_scanStopped) {
+      print('🛑 dispose 시 스캔 중지 신호 전송 (즉시)');
+      try {
+        _sendMessage('{"type":"stop_scan"}');
+      } catch (e) {
+        print('⚠️ dispose 시 스캔 중지 실패: $e');
+      }
+    } 
+    
+    _scanStopped = true; // 스캔 중지 플래그 설정
+    
+    _webSocketSubscription?.cancel();
+    _webSocketSubscription = null;
+    
     _channel?.sink.close();
     _channel = null;
     
-    // 컨트롤러 정리
+    if (mounted && !_isDisposed) {
+      _safeSetState(() {
+        _connected = false;
+        _addMessage('연결 해제됨');
+      });
+    }
+    
+    print('✅ 연결 해제 완료');
+  }
+  
+  void _sendMessage(String message) {
+    if (_connected && _channel != null && !_isDisposed) {
+      try {
+        // 스캔 중지 명령 감지
+        if (message.contains('stop_scan')) {
+          print('🛑 스캔 중지 명령 전송');
+          _scanStopped = true; // 즉시 로컬 처리 중단
+        } else if (message.contains('start_scan')) {
+          print('▶️ 스캔 시작 명령 전송');
+          _scanStopped = false; // 스캔 재개
+          _dataCount = 0; // 카운터 리셋
+        }
+        
+        _channel!.sink.add(message);
+        print('📤 송신: $message');
+      } catch (e) {
+        print('❌ 메시지 전송 실패: $e');
+      }
+    }
+  }
+
+  void _safeSetState(VoidCallback fn) {
+    if (!_isDisposed && mounted) {
+      try {
+        setState(fn);
+      } catch (e) {
+        // setState 실패는 조용히 무시
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    print('🗑️ MyHomePage dispose 시작');
+
+    if (_connected && _channel != null && !_scanStopped) {
+      print('🛑 dispose 시 스캔 중지 신호 전송 (즉시)');
+      try {
+        _sendMessage('{"type":"stop_scan"}');
+      } catch (e) {
+        print('⚠️ dispose 시 스캔 중지 실패: $e');
+      }
+    }    
+
+    _isDisposed = true;
+    _scanStopped = true;
+    
+    _providerUpdateTimer?.cancel();
+    _providerUpdateTimer = null;
+    
+    _webSocketSubscription?.cancel();
+    _webSocketSubscription = null;
+    
+    _channel?.sink.close();
+    _channel = null;
+    
+    _localLidarData.clear();
     _urlController.dispose();
     
-    // 부모 dispose 호출
+    print('✅ MyHomePage dispose 완료');
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final lidarDatas = ref.watch(lidarDataProvider);
+    Map<int, Lidar> lidarDatas = {};
+    
+    if (!_isDisposed && mounted) {
+      try {
+        lidarDatas = ref.watch(lidarDataProvider);
+      } catch (e) {
+        lidarDatas = Map.from(_localLidarData);
+      }
+      
+      if (lidarDatas.isEmpty && _localLidarData.isNotEmpty) {
+        lidarDatas = Map.from(_localLidarData);
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -163,13 +338,12 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
             ),
             const SizedBox(height: 16),
             
-            // 3D 뷰 제어 패널 - 반응형으로 수정
+            // 3D 뷰 제어 패널
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: Column(
                   children: [
-                    // 첫 번째 줄: 색상과 크기
                     Wrap(
                       spacing: 16,
                       runSpacing: 8,
@@ -183,13 +357,14 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                               items: const [
                                 DropdownMenuItem(value: 'distance', child: Text('거리')),
                                 DropdownMenuItem(value: 'channel', child: Text('채널')),
-                                DropdownMenuItem(value: 'intensity', child: Text('강도')),
                                 DropdownMenuItem(value: 'vertical_angle', child: Text('각도')),
                               ],
                               onChanged: (value) {
-                                setState(() {
-                                  _colorMode = value ?? 'distance';
-                                });
+                                if (!_isDisposed && mounted) {
+                                  setState(() {
+                                    _colorMode = value ?? 'distance';
+                                  });
+                                }
                               },
                             ),
                           ],
@@ -199,36 +374,61 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                           children: [
                             const Text('크기: '),
                             SizedBox(
-                              width: 120, // 슬라이더 폭을 넓힘
+                              width: 120,
                               child: Slider(
                                 value: _pointSize,
-                                min: 0.05, // 최소값을 0.05픽셀로 더 작게
-                                max: 2.0,  // 최대값을 2픽셀로 줄임
-                                divisions: 100, // 더 세밀한 조절
+                                min: 0.05,
+                                max: 2.0,
+                                divisions: 100,
                                 onChanged: (value) {
-                                  setState(() {
-                                    _pointSize = value;
-                                  });
+                                  if (!_isDisposed && mounted) {
+                                    setState(() {
+                                      _pointSize = value;
+                                    });
+                                  }
                                 },
                               ),
                             ),
                             SizedBox(
-                              width: 50, // 텍스트 표시 영역 확보
-                              child: Text(_pointSize.toStringAsFixed(2)), // 소수점 2자리로 변경
+                              width: 50,
+                              child: Text(_pointSize.toStringAsFixed(2)),
                             ),
                           ],
                         ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start, // 왼쪽 정렬
                           children: [
-                            const Text('그리드: '),
-                            Checkbox(
-                              value: _showGrid,
-                              onChanged: (value) {
-                                setState(() {
-                                  _showGrid = value ?? true;
-                                });
-                              },
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('그리드: '),
+                                Checkbox(
+                                  value: _showGrid,
+                                  onChanged: (value) {
+                                    if (!_isDisposed && mounted) {
+                                      setState(() {
+                                        _showGrid = value ?? true;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('AXIS: '),
+                                Checkbox(
+                                  value: _showAxis,
+                                  onChanged: (value) {
+                                    if (!_isDisposed && mounted) {
+                                      setState(() {
+                                        _showAxis = value ?? true;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -246,9 +446,11 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                                 DropdownMenuItem(value: 10.0, child: Text('10m')),
                               ],
                               onChanged: (value) {
-                                setState(() {
-                                  _gridStep = value ?? 1.0;
-                                });
+                                if (!_isDisposed && mounted) {
+                                  setState(() {
+                                    _gridStep = value ?? 1.0;
+                                  });
+                                }
                               },
                             ),
                           ],
@@ -285,7 +487,12 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                                 topRight: Radius.circular(8),
                               ),
                             ),
-                            child: const Text('수신 메시지'),
+                            child: Row(
+                              children: [
+                                const Text('수신 메시지'),
+                                const Spacer(), 
+                              ],
+                            ),
                           ),
                           Expanded(
                             child: _messages.isEmpty
@@ -311,7 +518,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                   
                   // 포인트클라우드 뷰 (오른쪽)
                   Expanded(
-                    flex: 2,
+                    flex: 3,
                     child: Container(
                       decoration: BoxDecoration(
                         border: Border.all(color: Colors.black26),
@@ -335,16 +542,31 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                                   style: TextStyle(color: Colors.white),
                                 ),
                                 const Spacer(),
+                                // 스캔 상태 표시
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: _scanStopped ? Colors.red : (_connected ? Colors.green : Colors.grey),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${_scanStopped ? "중지됨" : (_connected ? "스캔중" : "대기중")}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                ),
                               ],
                             ),
                           ),
                           Expanded(
                             child: Simple3DViewer(
                               channels: lidarDatas,
-                              pointSize: _pointSize, // Canvas용 크기 조정 제거 - 직접 픽셀값 사용
+                              pointSize: _pointSize,
                               colorMode: _colorMode,
-                              showGrid: _showGrid, // 그리드 옵션 전달
-                              gridStep: _gridStep, // 그리드 간격 전달
+                              showGrid: _showGrid,
+                              showAxis: _showAxis,
+                              gridStep: _gridStep,
                             ),
                           ),
                         ],
@@ -363,52 +585,32 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
               runSpacing: 8,
               children: [
                 ElevatedButton(
-                  onPressed: _connected && _channel != null
-                      ? () {
-                          String message = '{"type":"test1", "data":"테스트 메시지 1"}';
-                          _channel!.sink.add(message);
-                          print('송신: $message');
-                        }
+                  onPressed: _connected && _channel != null && !_isDisposed
+                      ? () => _sendMessage('{"type":"test1", "data":"테스트 메시지 1"}')
                       : null,
                   child: const Text('테스트 1'),
                 ),
                 ElevatedButton(
-                  onPressed: _connected && _channel != null
-                      ? () {
-                          String message = '{"type":"ping", "timestamp":"${DateTime.now().millisecondsSinceEpoch}"}';
-                          _channel!.sink.add(message);
-                          print('송신: $message');
-                        }
+                  onPressed: _connected && _channel != null && !_isDisposed
+                      ? () => _sendMessage('{"type":"ping", "timestamp":"${DateTime.now().millisecondsSinceEpoch}"}')
                       : null,
                   child: const Text('핑 테스트'),
                 ),
                 ElevatedButton(
-                  onPressed: _connected && _channel != null
-                      ? () {
-                          String message = '{"type":"start_scan"}';
-                          _channel!.sink.add(message);
-                          print('송신: $message');
-                        }
+                  onPressed: _connected && _channel != null && !_isDisposed
+                      ? () => _sendMessage('{"type":"start_scan"}')
                       : null,
-                  child: const Text('스캔 시작'),
+                  child: Text(_scanStopped ? '스캔 시작' : '스캔 중'),
                 ),
                 ElevatedButton(
-                  onPressed: _connected && _channel != null
-                      ? () {
-                          String message = '{"type":"stop_scan"}';
-                          _channel!.sink.add(message);
-                          print('송신: $message');
-                        }
+                  onPressed: _connected && _channel != null && !_isDisposed && !_scanStopped
+                      ? () => _sendMessage('{"type":"stop_scan"}')
                       : null,
                   child: const Text('스캔 중지'),
                 ),
                 ElevatedButton(
-                  onPressed: _connected && _channel != null
-                      ? () {
-                          String message = '{"type":"get_status"}';
-                          _channel!.sink.add(message);
-                          print('송신: $message');
-                        }
+                  onPressed: _connected && _channel != null && !_isDisposed
+                      ? () => _sendMessage('{"type":"get_status"}')
                       : null,
                   child: const Text('상태 확인'),
                 ),
