@@ -4,7 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:three_dart/three_dart.dart' as three;
 import 'package:three_dart_jsm/three_dart_jsm.dart' as three_jsm;
-import 'lidar.dart';
+import 'color_utils.dart';
+import '../lidar.dart';
 
 class PointCloud3DWidget extends StatefulWidget {
   final Map<int, Lidar> channels;
@@ -168,8 +169,8 @@ class _PointCloud3DWidgetState extends State<PointCloud3DWidget> {
     var material = three.PointsMaterial({
       'size': widget.pointSize,
       'vertexColors': true,
-      'transparent': true,
-      'opacity': 0.8,
+      'transparent': false,
+      // 'opacity': 0.8,
       'sizeAttenuation': false,
     });
     
@@ -179,22 +180,7 @@ class _PointCloud3DWidgetState extends State<PointCloud3DWidget> {
   }
 
   List<double> calculatePointColor(Point3D point, double minDistance, double maxDistance) {
-    switch (widget.colorMode) {
-      case 'distance':
-        // 거리 기반 색상 (가까우면 빨강, 멀면 파랑)
-        double normalized = maxDistance > minDistance 
-            ? (point.distance - minDistance) / (maxDistance - minDistance)
-            : 0.0;
-        return [1.0 - normalized, 0.0, normalized];
-        
-      case 'channel':
-        // 채널 기반 색상
-        double hue = (point.channel * 60) % 360;
-        return hsvToRgb(hue, 1.0, 1.0);
-        
-      default:
-        return [1.0, 1.0, 1.0]; // 기본 흰색
-    }
+    return ColorUtils.getPointColor(point, minDistance, maxDistance, widget.colorMode);
   }
 
   List<double> hsvToRgb(double h, double s, double v) {
