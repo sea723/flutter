@@ -3,7 +3,13 @@ file:///C:/Kanavi/flutter/.dart_tool/flutter_build/3a12c26707a695b6386c22e24f3f9
 file:///C:/Kanavi/flutter/.dart_tool/flutter_build/3a12c26707a695b6386c22e24f3f925c/web_plugin_registrant.dart
 file:///C:/Kanavi/flutter/lib/lidar.dart
 file:///C:/Kanavi/flutter/lib/main.dart
-file:///C:/Kanavi/flutter/lib/simple_3d_viewer.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/color_utils.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/coordinate_transform.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/grid_renderer.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/input_handler.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/performance_manager.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/point_renderer.dart
+file:///C:/Kanavi/flutter/lib/pointcloud/simple_3d_viewer.dart
 file:///C:/Users/MSI/AppData/Local/Pub/Cache/hosted/pub.dev/async-2.12.0/lib/async.dart
 file:///C:/Users/MSI/AppData/Local/Pub/Cache/hosted/pub.dev/async-2.12.0/lib/src/async_cache.dart
 file:///C:/Users/MSI/AppData/Local/Pub/Cache/hosted/pub.dev/async-2.12.0/lib/src/async_memoizer.dart

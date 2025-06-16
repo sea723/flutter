@@ -80,8 +80,8 @@ class Lidar {
       
       int totalPoints = distances.length;
       for (int i = 0; i < totalPoints; i++) {
-        // 방위각: -HFOV/2부터 시작해서 hresolution씩 증가
-        double currentAzimuth = -hfov/2 + (i * hresolution);
+        // 방위각: HFOV/2부터 시작해서 hresolution씩 감소 :: 반시계
+        double currentAzimuth = hfov/2 - (i * hresolution); 
         azimuth.add(currentAzimuth);
         pointIndex.add(i);
       }
@@ -130,9 +130,9 @@ class Lidar {
       int pointIdx = i < pointIndex.length ? pointIndex[i] : i;
       
       // 구면 좌표계를 직교 좌표계로 변환
-      double x = distance * math.cos(verticalAngleRad) * math.cos(azimuthRad);
-      double y = distance * math.cos(verticalAngleRad) * math.sin(azimuthRad);
-      double z = distance * math.sin(verticalAngleRad);
+      double x = distance * math.cos(verticalAngleRad) * math.sin(azimuthRad);
+      double y = distance * math.cos(verticalAngleRad) * math.cos(azimuthRad);
+      double z = -distance * math.sin(verticalAngleRad); //왼손좌표계 -> 오른손좌표계
       
       points.add(Point3D(
         x: x,

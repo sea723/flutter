@@ -4,7 +4,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import 'lidar.dart';
-import 'simple_3d_viewer.dart';
+import 'pointcloud/simple_3d_viewer.dart'; 
 
 final lidarDataProvider = StateProvider<Map<int, Lidar>>((ref) => {});
 
@@ -17,6 +17,7 @@ class MyHomePage extends ConsumerStatefulWidget {
 
 class _MyHomePageState extends ConsumerState<MyHomePage> {
   final TextEditingController _urlController = TextEditingController(text: 'ws://127.0.0.1:8765');
+  final GlobalKey _viewerKey = GlobalKey();
   WebSocketChannel? _channel;
   StreamSubscription? _webSocketSubscription;
   List<String> _messages = [];
@@ -26,8 +27,10 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
   double _pointSize = 1.0;
   bool _showGrid = true;
   bool _showAxis = true;
+  bool _areaDrawing = false;
   double _gridStep = 1.0;
   bool _isDisposed = false;
+  Map<String, double>? _savedCameraState;
   
   // 내부 라이다 데이터 저장소
   Map<int, Lidar> _localLidarData = {};
@@ -143,12 +146,14 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
       // 로컬 데이터에 저장
       _localLidarData[lidar.channel] = lidar;
       
+      /* 거리 수신 출력 비활성화 : sykim
       // UI 업데이트는 조건부로 (1초에 10번만)
       if (_dataCount % 10 == 0) {
         _safeSetState(() {
           _addMessage('[라이다] 채널 ${jsonData['channel']}: ${jsonData['distances']?.length ?? 0}개');
         });
       }
+      */
       
     } catch (e) {
       if (shouldLog) {
@@ -199,6 +204,134 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
     }
     _messages.add('[${DateTime.now().toString().substring(11, 19)}] $message');
   }
+
+  void _resetCameraView() {
+    final viewerState = _viewerKey.currentState;
+    if (viewerState != null && viewerState is State) {
+      // 리플렉션을 사용하지 않고 간단한 방법
+      try {
+        // dynamic으로 캐스팅해서 메서드 호출
+        (viewerState as dynamic).resetCameraView();
+        print('✅ 카메라 리셋 성공');
+        
+        if (mounted && !_isDisposed) {
+          _safeSetState(() {
+            _addMessage('[시스템] 카메라 뷰가 초기화되었습니다');
+          });
+        }
+      } catch (e) {
+        print('❌ 카메라 리셋 실패: $e');
+        if (mounted && !_isDisposed) {
+          _safeSetState(() {
+            _addMessage('[에러] 카메라 초기화 실패: $e');
+          });
+        }
+      }
+    } else {
+      print('❌ 3D 뷰어 상태를 찾을 수 없음');
+      if (mounted && !_isDisposed) {
+        _safeSetState(() {
+          _addMessage('[에러] 3D 뷰어가 아직 준비되지 않았습니다');
+        });
+      }
+    }
+  }
+
+  // 🎯 카메라 상태 저장 (resetCameraView와 동일한 패턴)
+  void _saveCameraState() {
+    final viewerState = _viewerKey.currentState;
+    if (viewerState != null && viewerState is State) {
+      try {
+        // resetCameraView()와 동일한 호출 방식
+        _savedCameraState = (viewerState as dynamic).getCameraState();
+        print('📷 카메라 상태 저장됨');
+        
+        if (mounted && !_isDisposed) {
+          _safeSetState(() {
+            _addMessage('[시스템] 카메라 상태가 저장되었습니다');
+          });
+        }
+      } catch (e) {
+        print('❌ 카메라 상태 저장 실패: $e');
+      }
+    }
+  }
+
+  // 🎯 카메라 상태 복원 
+  void _restoreCameraState() {
+    if (_savedCameraState == null) {
+      print('⚠️ 저장된 카메라 상태가 없습니다');
+      return;
+    }
+
+    final viewerState = _viewerKey.currentState;
+    if (viewerState != null && viewerState is State) {
+      try {
+        // resetCameraView()와 동일한 호출 방식
+        (viewerState as dynamic).setCameraState(_savedCameraState!);
+        print('📷 카메라 상태 복원됨');
+        
+        if (mounted && !_isDisposed) {
+          _safeSetState(() {
+            _addMessage('[시스템] 카메라 상태가 복원되었습니다');
+          });
+        }
+        
+        _savedCameraState = null; // 복원 후 클리어
+        
+      } catch (e) {
+        print('❌ 카메라 상태 복원 실패: $e');
+      }
+    }
+  }
+
+  void _setTopView() {
+  final viewerState = _viewerKey.currentState;
+  if (viewerState != null && viewerState is State) {
+    try {
+      // 🎯 다른 카메라 메서드들과 동일한 dynamic 패턴
+      (viewerState as dynamic).setTopView();
+      print('✅ Top View 설정 성공');
+      
+      if (mounted && !_isDisposed) {
+        _safeSetState(() {
+          _addMessage('[시스템] Top-Down View로 전환되었습니다');
+        });
+      }
+    } catch (e) {
+      print('❌ Top View 설정 실패: $e');
+      if (mounted && !_isDisposed) {
+        _safeSetState(() {
+          _addMessage('[에러] Top View 전환 실패: $e');
+        });
+      }
+    }
+  }
+}
+  
+void _exitTopView() {
+  final viewerState = _viewerKey.currentState;
+  if (viewerState != null && viewerState is State) {
+    try {
+      // 🎯 다른 카메라 메서드들과 동일한 dynamic 패턴
+      (viewerState as dynamic).exitTopView();
+      print('✅ Top View 고정 종료');
+      
+      if (mounted && !_isDisposed) {
+        _safeSetState(() {
+          _addMessage('[시스템] Top-Down View가 종료되었습니다');
+        });
+      }
+    } catch (e) {
+      print('❌ Top View 종료 실패: $e');
+      if (mounted && !_isDisposed) {
+        _safeSetState(() {
+          _addMessage('[에러] Top View 종료: $e');
+        });
+      }
+    }
+  }
+}
 
   void _disconnect() {
     print('🔌 연결 해제 시작');
@@ -454,6 +587,21 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                             ),
                           ],
                         ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _resetCameraView,
+                              icon: const Icon(Icons.camera_alt, size: 16),
+                              label: const Text('뷰 초기화'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green[600],
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ],
@@ -528,7 +676,7 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                           Container(
                             padding: const EdgeInsets.all(8),
                             decoration: const BoxDecoration(
-                              color: Colors.blue,
+                              color: Colors.grey,
                               borderRadius: BorderRadius.only(
                                 topLeft: Radius.circular(8),
                                 topRight: Radius.circular(8),
@@ -560,12 +708,14 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                           ),
                           Expanded(
                             child: Simple3DViewer(
+                              key: _viewerKey,
                               channels: lidarDatas,
                               pointSize: _pointSize,
                               colorMode: _colorMode,
                               showGrid: _showGrid,
                               showAxis: _showAxis,
                               gridStep: _gridStep,
+                              areaDrawing: _areaDrawing,
                             ),
                           ),
                         ],
@@ -583,12 +733,6 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                ElevatedButton(
-                  onPressed: _connected && _channel != null && !_isDisposed
-                      ? () => _sendMessage('{"type":"test1", "data":"테스트 메시지 1"}')
-                      : null,
-                  child: const Text('테스트 1'),
-                ),
                 ElevatedButton(
                   onPressed: _connected && _channel != null && !_isDisposed
                       ? () => _sendMessage('{"type":"ping", "timestamp":"${DateTime.now().millisecondsSinceEpoch}"}')
@@ -622,6 +766,31 @@ class _MyHomePageState extends ConsumerState<MyHomePage> {
                       ? () => _sendMessage('{"type":"get_status"}')
                       : null,
                   child: const Text('상태 확인'),
+                ),
+                ElevatedButton(
+                  onPressed: _connected && _channel != null && !_isDisposed
+                      ? () {
+                          setState(() {
+                            _areaDrawing = !_areaDrawing;
+                            if(_areaDrawing) {
+                              _saveCameraState();
+                              _setTopView();
+                            } else {
+                              _restoreCameraState();
+                              _exitTopView();
+                            }
+                          });
+                        }
+                      : null,
+                  child: Text(_areaDrawing ? '영역 그리기 종료' : '영역 그리기 시작'),
+                ),
+                ElevatedButton(
+                  onPressed: _connected && _channel != null && !_isDisposed && _areaDrawing
+                      ? () {
+                          
+                        }
+                      : null,
+                  child: const Text('영역 그리기 설정'),
                 ),
               ],
             ),
